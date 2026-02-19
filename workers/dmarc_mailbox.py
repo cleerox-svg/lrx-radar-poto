@@ -203,16 +203,16 @@ def _process_imap_mailbox(queue_client) -> int:
 
 
 def run(once: bool = False) -> None:
+    if not settings.dmarc_imap_enabled and not settings.dmarc_local_drop_dir:
+        print("DMARC mailbox worker disabled. Set DMARC_IMAP_ENABLED=true or DMARC_LOCAL_DROP_DIR.")
+        return
+
     try:
         queue_client = redis_client()
         queue_client.ping()
     except Exception as exc:
         print(f"Redis connection failed: {exc}")
         print("Start Redis (or docker compose) before running DMARC mailbox worker.")
-        return
-
-    if not settings.dmarc_imap_enabled and not settings.dmarc_local_drop_dir:
-        print("DMARC mailbox worker disabled. Set DMARC_IMAP_ENABLED=true or DMARC_LOCAL_DROP_DIR.")
         return
 
     print(f"DMARC mailbox worker started. Queue={settings.raw_event_queue}")
