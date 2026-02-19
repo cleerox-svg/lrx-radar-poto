@@ -23,6 +23,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       RAW_EVENT_QUEUE: lrx:raw_events
       LIVE_FEED_ENABLED: "false"
+      PUBLIC_API_BASE_URL: http://localhost:8000
       MONITORED_BRANDS: microsoft,google,okta,adobe,amazon,paypal,bankofamerica
     ports:
       - "8000:8000"
@@ -59,6 +60,45 @@ services:
     depends_on:
       - redis
       - postgres
+
+  worker_certstream:
+    build: .
+    command: python -m workers.certstream
+    profiles:
+      - feeds
+    environment:
+      DATABASE_URL: postgresql+psycopg2://lrx:lrx@postgres:5432/lrx_radar
+      REDIS_URL: redis://redis:6379/0
+      RAW_EVENT_QUEUE: lrx:raw_events
+      MONITORED_BRANDS: microsoft,google,okta,adobe,amazon,paypal,bankofamerica
+      CERTSTREAM_ENABLED: "true"
+      CERTSTREAM_WS_URL: wss://certstream.calidog.io/
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+
+  worker_dmarc_mailbox:
+    build: .
+    command: python -m workers.dmarc_mailbox
+    profiles:
+      - mail
+    environment:
+      DATABASE_URL: postgresql+psycopg2://lrx:lrx@postgres:5432/lrx_radar
+      REDIS_URL: redis://redis:6379/0
+      RAW_EVENT_QUEUE: lrx:raw_events
+      DMARC_IMAP_ENABLED: "false"
+      DMARC_IMAP_HOST: imap.example.com
+      DMARC_IMAP_PORT: 993
+      DMARC_IMAP_USERNAME: dmarc@yourdomain.com
+      DMARC_IMAP_PASSWORD: change-me
+      DMARC_IMAP_FOLDER: INBOX
+      DMARC_IMAP_SEARCH_QUERY: UNSEEN
+      DMARC_IMAP_POLL_SECONDS: 60
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
 
 volumes:
   postgres_data:
