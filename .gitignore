@@ -1,0 +1,8 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+lrx_radar.db
+postgres_data/
