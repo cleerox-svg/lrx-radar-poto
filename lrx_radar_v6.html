@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LRX Radar | Unified Threat Platform</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        slate: { 750: "#273449", 850: "#1e293b", 900: "#0f172a" },
+                        radar: { 400: "#34d399", 500: "#10b981", 600: "#059669", 900: "#064e3b" },
+                        alert: { 500: "#ef4444", 900: "#7f1d1d" }
+                    },
+                    animation: {
+                        "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite"
+                    }
+                }
+            }
+        };
+    </script>
+    <style>
+        [x-cloak] { display: none !important; }
+        .json-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+        .json-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        .json-scroll::-webkit-scrollbar-track { background: #1e293b; }
+
+        .world-map-bg {
+            background-image: url("https://upload.wikimedia.org/wikipedia/commons/8/80/World_map_-_low_resolution.svg");
+            background-size: cover;
+            background-position: 50% 50%;
+            background-repeat: no-repeat;
+            opacity: 0.5;
+            filter: invert(1) hue-rotate(180deg) brightness(1.2) contrast(0.9);
+        }
+
+        .marker-group:hover .marker-tooltip { opacity: 1; }
+
+        @keyframes scan {
+            0% { transform: translateY(0); }
+            50% { transform: translateY(480px); }
+            100% { transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-200 font-sans antialiased h-screen flex overflow-hidden"
+      x-data="appData()"
+      x-init="init()">
+
+    <aside class="w-64 bg-slate-850 border-r border-slate-700 flex flex-col z-20 shadow-xl">
+        <div class="h-20 flex items-center px-6 border-b border-slate-700">
+            <div class="relative w-8 h-8 mr-3 flex items-center justify-center">
+                <i class="fa-solid fa-satellite-dish text-radar-500 text-xl relative z-10"></i>
+                <div class="absolute inset-0 bg-radar-500/20 rounded-full animate-ping"></div>
+            </div>
+            <div>
+                <span class="block text-lg font-bold tracking-wider text-white">LRX RADAR</span>
+                <span class="block text-[10px] text-radar-400 font-mono tracking-widest uppercase">Global Defense</span>
+            </div>
+        </div>
+
+        <nav class="flex-1 px-4 py-6 space-y-2">
+            <a href="#"
+               @click.prevent="currentTab = 'heatmap'"
+               :class="{
+                    'bg-radar-900/50 text-radar-400 border-l-4 border-radar-500': currentTab === 'heatmap',
+                    'text-slate-400 hover:bg-slate-800 hover:text-white border-l-4 border-transparent': currentTab !== 'heatmap'
+               }"
+               class="flex items-center px-4 py-3 transition-all">
+                <i class="fa-solid fa-earth-americas w-6"></i>
+                <span class="font-medium">Threat Heatmap</span>
+            </a>
+            <a href="#"
+               @click.prevent="currentTab = 'ato'"
+               :class="{
+                    'bg-radar-900/50 text-radar-400 border-l-4 border-radar-500': currentTab === 'ato',
+                    'text-slate-400 hover:bg-slate-800 hover:text-white border-l-4 border-transparent': currentTab !== 'ato'
+               }"
+               class="flex items-center px-4 py-3 transition-all">
+                <i class="fa-solid fa-users-slash w-6"></i>
+                <span class="font-medium">Account Takeover</span>
+                <span class="ml-auto bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                      x-show="atoAlerts > 0"
+                      x-text="atoAlerts"></span>
+            </a>
+            <a href="#"
+               @click.prevent="currentTab = 'email'"
+               :class="{
+                    'bg-radar-900/50 text-radar-400 border-l-4 border-radar-500': currentTab === 'email',
+                    'text-slate-400 hover:bg-slate-800 hover:text-white border-l-4 border-transparent': currentTab !== 'email'
+               }"
+               class="flex items-center px-4 py-3 transition-all">
+                <i class="fa-solid fa-envelope-shield w-6"></i>
+                <span class="font-medium">Email Auth (DMARC)</span>
+            </a>
+        </nav>
+    </aside>
+
+    <main class="flex-1 flex flex-col min-w-0 overflow-hidden bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')]">
+        <header class="h-16 bg-slate-850/90 backdrop-blur border-b border-slate-700 flex items-center justify-between px-8 z-10">
+            <h2 class="text-xl font-semibold flex items-center text-white">
+                <i class="fa-solid fa-chevron-right text-radar-500 text-xs mr-3"></i>
+                <span x-text="tabTitles[currentTab]"></span>
+            </h2>
+            <div class="flex items-center space-x-4">
+                <div class="flex items-center space-x-2 bg-slate-900 px-3 py-1.5 rounded border border-radar-900/50 shadow-[0_0_10px_rgba(16,185,129,0.1)]">
+                    <span class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-radar-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-radar-500"></span>
+                    </span>
+                    <span class="text-xs font-mono text-radar-400">MONITORING ACTIVE</span>
+                </div>
+                <span class="text-xs text-slate-400 font-mono" x-text="'Updated: ' + lastUpdated"></span>
+            </div>
+        </header>
+
+        <div class="flex-1 overflow-auto p-8 relative">
+            <div x-show="errorMessage" class="mb-6 p-3 rounded border border-red-900 bg-red-950/30 text-red-300 text-sm" x-text="errorMessage"></div>
+
+            <div x-show="currentTab === 'heatmap'" x-transition.opacity>
+                <div class="grid grid-cols-1 xl:grid-cols-12 gap-6 mb-8">
+                    <div class="xl:col-span-7 bg-slate-800 rounded-lg border border-slate-700 relative overflow-hidden shadow-2xl h-[500px]">
+                        <div class="absolute top-4 left-4 z-10 bg-slate-900/80 p-3 rounded border border-slate-700 backdrop-blur-sm">
+                            <h3 class="text-white font-bold tracking-wider flex items-center">
+                                <i class="fa-solid fa-fire-flame-curved text-red-500 mr-2"></i>ATTACK ORIGIN HEATMAP
+                            </h3>
+                        </div>
+                        <div class="absolute inset-0 world-map-bg"></div>
+                        <div class="absolute left-0 right-0 h-[20px] bg-gradient-to-b from-transparent via-radar-500/10 to-transparent pointer-events-none"
+                             style="animation: scan 4s ease-in-out infinite;"></div>
+
+                        <template x-for="loc in threatMap" :key="loc.id">
+                            <div class="absolute transform -translate-x-1/2 -translate-y-1/2 marker-group cursor-pointer flex items-center justify-center"
+                                 :style="`top: ${loc.top}%; left: ${loc.left}%`">
+                                <div class="marker-tooltip absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-52 bg-slate-900/95 text-center text-xs rounded border border-slate-500 opacity-0 transition-opacity p-2 z-30 pointer-events-none shadow-xl">
+                                    <div class="font-bold text-white" x-text="loc.country"></div>
+                                    <div class="text-red-400 mt-1 font-mono">
+                                        Vol: <span x-text="loc.volume"></span> | ATOs: <span x-text="loc.atos"></span>
+                                    </div>
+                                    <div class="text-slate-400 text-[10px] mt-1 italic" x-text="loc.primary_target"></div>
+                                </div>
+                                <div class="relative flex items-center justify-center" :class="loc.sizeClass">
+                                    <div class="absolute inset-0 rounded-full opacity-40 animate-pulse-slow blur-md" :class="loc.colorClass"></div>
+                                    <div class="relative rounded-full shadow-[0_0_15px_currentColor] opacity-90"
+                                         :class="[loc.colorClass, loc.innerSizeClass]"></div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+
+                    <div class="xl:col-span-5 flex flex-col gap-6 h-[500px]">
+                        <div class="bg-slate-800 rounded-lg border border-slate-700 shadow-xl overflow-hidden flex-1 flex flex-col">
+                            <div class="px-5 py-3 border-b border-slate-700 bg-slate-850">
+                                <h3 class="font-bold text-white uppercase text-sm"><i class="fa-solid fa-layer-group mr-2 text-radar-500"></i>Attack Vectors</h3>
+                            </div>
+                            <div class="flex-1 p-4 overflow-auto bg-slate-900/50 space-y-4">
+                                <template x-for="cat in categories" :key="cat.name">
+                                    <div>
+                                        <div class="flex justify-between text-xs mb-1">
+                                            <span class="text-slate-300 font-bold" x-text="cat.name"></span>
+                                            <span class="text-slate-400" x-text="cat.count + ' events'"></span>
+                                        </div>
+                                        <div class="h-1.5 bg-slate-700 rounded-full overflow-hidden mb-1">
+                                            <div class="h-full rounded-full" :class="cat.color" :style="`width: ${cat.percent}%`"></div>
+                                        </div>
+                                        <div class="flex gap-2 flex-wrap">
+                                            <template x-for="tag in cat.tags" :key="tag">
+                                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 border border-slate-700" x-text="tag"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <div class="bg-slate-800 rounded-lg border border-slate-700 shadow-xl overflow-hidden h-48 flex flex-col">
+                            <div class="px-5 py-3 border-b border-slate-700 bg-slate-850 flex justify-between">
+                                <h3 class="font-bold text-white uppercase text-sm"><i class="fa-solid fa-envelope-circle-check mr-2 text-yellow-500"></i>Email Auth Stats</h3>
+                                <span class="text-xs text-yellow-500 font-mono" x-text="emailPanel.rejects.toLocaleString() + ' REJECTS'"></span>
+                            </div>
+                            <div class="flex-1 p-4 grid grid-cols-3 gap-4 text-center bg-slate-900/50 items-center">
+                                <div class="p-2 rounded bg-slate-800 border border-slate-700">
+                                    <div class="text-2xl font-bold text-red-500" x-text="emailPanel.spf_fail_pct + '%'"></div>
+                                    <div class="text-[10px] text-slate-400 uppercase tracking-widest">SPF Fail</div>
+                                </div>
+                                <div class="p-2 rounded bg-slate-800 border border-slate-700">
+                                    <div class="text-2xl font-bold text-orange-500" x-text="emailPanel.dkim_fail_pct + '%'"></div>
+                                    <div class="text-[10px] text-slate-400 uppercase tracking-widest">DKIM Fail</div>
+                                </div>
+                                <div class="p-2 rounded bg-slate-800 border border-slate-700">
+                                    <div class="text-2xl font-bold text-yellow-500" x-text="emailPanel.dmarc_fail_pct + '%'"></div>
+                                    <div class="text-[10px] text-slate-400 uppercase tracking-widest">DMARC</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden shadow-xl">
+                    <div class="px-5 py-3 border-b border-slate-700 bg-slate-850 flex justify-between items-center">
+                        <h3 class="font-bold text-white uppercase text-sm"><i class="fa-solid fa-crosshairs mr-2 text-radar-500"></i>High-Value Targets (Live Feed)</h3>
+                        <span class="text-[10px] bg-red-900/50 text-red-400 border border-red-900 px-2 py-0.5 rounded animate-pulse">LIVE INCIDENTS</span>
+                    </div>
+                    <table class="w-full text-left text-sm text-slate-400">
+                        <thead class="bg-slate-900/50 text-slate-500 uppercase text-[10px] font-bold tracking-wider">
+                            <tr>
+                                <th class="px-4 py-2">Target Brand</th>
+                                <th class="px-4 py-2">Impersonation Domain</th>
+                                <th class="px-4 py-2">Attack Type</th>
+                                <th class="px-4 py-2 text-right">Confidence</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-700">
+                            <template x-for="target in highValueTargets" :key="target.id">
+                                <tr class="hover:bg-slate-700/30 transition-colors">
+                                    <td class="px-4 py-3">
+                                        <div class="flex items-center">
+                                            <i :class="target.icon" class="mr-2 w-4 text-center text-slate-300"></i>
+                                            <span class="font-bold text-white" x-text="target.brand"></span>
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-3 font-mono text-xs text-red-300" x-text="target.domain"></td>
+                                    <td class="px-4 py-3 text-xs">
+                                        <span class="px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 border border-slate-600" x-text="target.type"></span>
+                                    </td>
+                                    <td class="px-4 py-3 text-right">
+                                        <span class="text-radar-400 font-mono text-xs" x-text="target.confidence + '%'"></span>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div x-show="currentTab === 'ato'" x-transition.opacity x-cloak>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                    <div class="bg-slate-800 p-5 rounded-lg border border-slate-700 shadow-lg relative group">
+                        <p class="text-slate-400 text-xs uppercase tracking-wider font-semibold">Compromised Accounts</p>
+                        <p class="text-3xl font-bold text-red-500 mt-1" x-text="ato.compromised_accounts"></p>
+                        <div class="absolute top-4 right-4 text-red-900/40 group-hover:text-red-500/20 transition-colors"><i class="fa-solid fa-user-injured text-4xl"></i></div>
+                    </div>
+                    <div class="bg-slate-800 p-5 rounded-lg border border-slate-700 shadow-lg">
+                        <p class="text-slate-400 text-xs uppercase tracking-wider font-semibold">Credential Stuffing Rate</p>
+                        <p class="text-3xl font-bold text-orange-400 mt-1">
+                            <span x-text="ato.credential_rate_per_min"></span><span class="text-sm text-slate-500">/min</span>
+                        </p>
+                    </div>
+                    <div class="bg-slate-800 p-5 rounded-lg border border-slate-700 shadow-lg">
+                        <p class="text-slate-400 text-xs uppercase tracking-wider font-semibold">Impossible Travel</p>
+                        <p class="text-3xl font-bold text-white mt-1">
+                            <span x-text="ato.impossible_travel_flags"></span> <span class="text-sm font-normal text-slate-400">Flags</span>
+                        </p>
+                    </div>
+                    <div class="bg-slate-800 p-5 rounded-lg border border-slate-700 shadow-lg">
+                        <p class="text-slate-400 text-xs uppercase tracking-wider font-semibold">Avg Remediation</p>
+                        <p class="text-3xl font-bold text-radar-400 mt-1" x-text="ato.avg_remediation_seconds + 's'"></p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 xl:grid-cols-3 gap-8">
+                    <div class="xl:col-span-2 bg-slate-800 rounded-lg border border-slate-700 p-6 shadow-xl">
+                        <div class="flex justify-between items-center mb-6">
+                            <h3 class="font-bold text-white flex items-center">
+                                <i class="fa-solid fa-chart-line text-radar-500 mr-2"></i> Login Velocity (Brute Force)
+                            </h3>
+                            <span class="text-xs bg-slate-700 px-2 py-1 rounded text-slate-300">Live</span>
+                        </div>
+                        <div class="h-64 w-full">
+                            <canvas id="atoChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="bg-slate-800 rounded-lg border border-slate-700 shadow-xl overflow-hidden flex flex-col">
+                        <div class="px-5 py-4 border-b border-slate-700 bg-slate-850 flex justify-between items-center">
+                            <h3 class="font-bold text-white text-sm uppercase">Impossible Travel</h3>
+                            <span class="animate-pulse h-2 w-2 bg-red-500 rounded-full"></span>
+                        </div>
+                        <div class="flex-1 p-0 overflow-y-auto h-64">
+                            <template x-for="event in ato.impossibleTravelEvents" :key="event.id">
+                                <div class="p-4 border-b border-slate-700 hover:bg-slate-750 transition-colors">
+                                    <div class="flex justify-between items-start mb-2">
+                                        <span class="font-bold text-white text-sm" x-text="event.user"></span>
+                                        <span class="text-xs font-mono text-slate-500" x-text="event.time"></span>
+                                    </div>
+                                    <div class="flex items-center text-xs text-slate-400 mb-3">
+                                        <span x-text="event.loc1"></span>
+                                        <i class="fa-solid fa-plane text-radar-500 mx-2"></i>
+                                        <span x-text="event.loc2"></span>
+                                    </div>
+                                    <button class="w-full text-xs bg-slate-700 hover:bg-red-600 hover:text-white px-2 py-1 rounded transition-colors">
+                                        Revoke Session
+                                    </button>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="currentTab === 'email'" x-transition.opacity x-cloak>
+                <div class="grid grid-cols-1 xl:grid-cols-3 gap-8 mb-8">
+                    <div class="xl:col-span-2 bg-slate-800 rounded-lg border border-slate-700 p-6 shadow-xl">
+                        <h3 class="font-bold text-white mb-6">Authentication Funnel (24h)</h3>
+                        <div class="space-y-6">
+                            <div>
+                                <div class="flex justify-between text-sm mb-1 text-slate-300">
+                                    <span>Total Traffic</span>
+                                    <span class="font-mono" x-text="email.total_traffic.toLocaleString()"></span>
+                                </div>
+                                <div class="h-4 bg-slate-700 rounded-full w-full"></div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-sm mb-1 text-slate-300">
+                                    <span>SPF Pass</span>
+                                    <span class="font-mono" x-text="email.spf_pass.toLocaleString()"></span>
+                                </div>
+                                <div class="h-4 bg-slate-700 rounded-full overflow-hidden">
+                                    <div class="h-4 bg-green-500" :style="barWidth(email.spf_pass, email.total_traffic)"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-sm mb-1 text-slate-300">
+                                    <span>DKIM Pass</span>
+                                    <span class="font-mono" x-text="email.dkim_pass.toLocaleString()"></span>
+                                </div>
+                                <div class="h-4 bg-slate-700 rounded-full overflow-hidden">
+                                    <div class="h-4 bg-radar-500" :style="barWidth(email.dkim_pass, email.total_traffic)"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-sm mb-1 text-slate-300">
+                                    <span>DMARC Enforced (Reject)</span>
+                                    <span class="font-mono" x-text="email.dmarc_enforced.toLocaleString()"></span>
+                                </div>
+                                <div class="h-4 bg-slate-700 rounded-full overflow-hidden">
+                                    <div class="h-4 bg-yellow-500" :style="barWidth(email.dmarc_enforced, email.total_traffic)"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-800 rounded-lg border border-slate-700 p-6 shadow-xl">
+                        <h3 class="font-bold text-white mb-6">Policy Insights</h3>
+                        <div class="space-y-4">
+                            <div class="p-3 rounded bg-slate-900 border border-slate-700">
+                                <p class="text-[11px] uppercase tracking-widest text-slate-400">SPF Fails</p>
+                                <p class="text-2xl font-bold text-red-400" x-text="email.spf_fail.toLocaleString()"></p>
+                            </div>
+                            <div class="p-3 rounded bg-slate-900 border border-slate-700">
+                                <p class="text-[11px] uppercase tracking-widest text-slate-400">DKIM Fails</p>
+                                <p class="text-2xl font-bold text-orange-400" x-text="email.dkim_fail.toLocaleString()"></p>
+                            </div>
+                            <div class="p-3 rounded bg-slate-900 border border-slate-700">
+                                <p class="text-[11px] uppercase tracking-widest text-slate-400">Active Rejects</p>
+                                <p class="text-2xl font-bold text-yellow-400" x-text="email.dmarc_enforced.toLocaleString()"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden shadow-xl">
+                    <div class="px-5 py-3 border-b border-slate-700 bg-slate-850 flex justify-between items-center">
+                        <h3 class="font-bold text-white uppercase text-sm"><i class="fa-solid fa-file-code mr-2 text-radar-500"></i>Recent DMARC Aggregate Reports</h3>
+                        <span class="text-xs text-slate-400 font-mono">AUTO-INGESTED</span>
+                    </div>
+                    <table class="w-full text-left text-sm text-slate-400">
+                        <thead class="bg-slate-900/50 text-slate-500 uppercase text-[10px] font-bold tracking-wider">
+                            <tr>
+                                <th class="px-4 py-2">Domain</th>
+                                <th class="px-4 py-2">Reporter</th>
+                                <th class="px-4 py-2">Source IP</th>
+                                <th class="px-4 py-2">Disposition</th>
+                                <th class="px-4 py-2 text-right">Count</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-700">
+                            <template x-for="row in email.reports" :key="row.id">
+                                <tr class="hover:bg-slate-700/30 transition-colors">
+                                    <td class="px-4 py-3 font-mono text-xs text-slate-300" x-text="row.domain"></td>
+                                    <td class="px-4 py-3" x-text="row.reporting_org"></td>
+                                    <td class="px-4 py-3 font-mono text-xs text-slate-300" x-text="row.source_ip"></td>
+                                    <td class="px-4 py-3">
+                                        <span class="px-2 py-0.5 rounded text-[10px] font-semibold uppercase"
+                                              :class="row.disposition === 'reject' ? 'bg-red-900/40 text-red-300 border border-red-900' : 'bg-slate-700 text-slate-300 border border-slate-600'"
+                                              x-text="row.disposition"></span>
+                                    </td>
+                                    <td class="px-4 py-3 text-right font-mono" x-text="row.msg_count"></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        function appData() {
+            return {
+                currentTab: "heatmap",
+                tabTitles: {
+                    heatmap: "Global Threat Heatmap",
+                    ato: "ATO War Room",
+                    email: "Email Compliance Center"
+                },
+                lastUpdated: "--",
+                errorMessage: "",
+                atoAlerts: 0,
+                threatMap: [],
+                categories: [],
+                highValueTargets: [],
+                emailPanel: {
+                    rejects: 0,
+                    spf_fail_pct: 0,
+                    dkim_fail_pct: 0,
+                    dmarc_fail_pct: 0
+                },
+                ato: {
+                    alerts: 0,
+                    compromised_accounts: 0,
+                    credential_rate_per_min: 0,
+                    impossible_travel_flags: 0,
+                    avg_remediation_seconds: 0,
+                    velocity: [],
+                    impossibleTravelEvents: []
+                },
+                email: {
+                    total_traffic: 0,
+                    spf_fail: 0,
+                    dkim_fail: 0,
+                    dmarc_enforced: 0,
+                    spf_pass: 0,
+                    dkim_pass: 0,
+                    reports: []
+                },
+                atoChart: null,
+                pollHandle: null,
+
+                async init() {
+                    await this.refresh();
+                    this.$nextTick(() => this.initChart());
+                    this.pollHandle = setInterval(() => this.refresh(), 10000);
+                },
+
+                async refresh() {
+                    try {
+                        const response = await fetch("/api/dashboard");
+                        if (!response.ok) {
+                            throw new Error("Dashboard API unavailable");
+                        }
+                        const payload = await response.json();
+                        this.errorMessage = "";
+                        this.applyPayload(payload);
+                    } catch (error) {
+                        this.errorMessage = "Failed to refresh live data. Showing latest cached values.";
+                    }
+                },
+
+                applyPayload(payload) {
+                    const heat = payload.heatmap || {};
+                    this.threatMap = heat.threatMap || [];
+                    this.categories = heat.categories || [];
+                    this.highValueTargets = heat.highValueTargets || [];
+                    this.emailPanel = heat.emailStats || this.emailPanel;
+
+                    this.ato = payload.ato || this.ato;
+                    this.email = payload.email || this.email;
+                    this.atoAlerts = this.ato.alerts || 0;
+                    this.lastUpdated = new Date(payload.updated_at || Date.now()).toLocaleTimeString();
+                    this.updateChart();
+                },
+
+                initChart() {
+                    const canvas = document.getElementById("atoChart");
+                    if (!canvas) {
+                        return;
+                    }
+                    const context = canvas.getContext("2d");
+                    this.atoChart = new Chart(context, {
+                        type: "line",
+                        data: {
+                            labels: ["-55m", "-50m", "-45m", "-40m", "-35m", "-30m", "-25m", "-20m", "-15m", "-10m", "-5m", "Now"],
+                            datasets: [
+                                {
+                                    label: "Attempts / 5m",
+                                    data: this.ato.velocity,
+                                    borderColor: "#10b981",
+                                    backgroundColor: "rgba(16, 185, 129, 0.2)",
+                                    tension: 0.25,
+                                    fill: true,
+                                    pointRadius: 0
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { labels: { color: "#94a3b8" } }
+                            },
+                            scales: {
+                                x: { ticks: { color: "#64748b" }, grid: { color: "rgba(100, 116, 139, 0.1)" } },
+                                y: { ticks: { color: "#64748b" }, grid: { color: "rgba(100, 116, 139, 0.1)" } }
+                            }
+                        }
+                    });
+                },
+
+                updateChart() {
+                    if (!this.atoChart) {
+                        return;
+                    }
+                    this.atoChart.data.datasets[0].data = this.ato.velocity || [];
+                    this.atoChart.update("none");
+                },
+
+                barWidth(value, total) {
+                    if (!total) {
+                        return "width: 0%";
+                    }
+                    const percent = Math.max(0, Math.min(100, Math.round((value / total) * 100)));
+                    return `width: ${percent}%`;
+                }
+            };
+        }
+    </script>
+</body>
+</html>
